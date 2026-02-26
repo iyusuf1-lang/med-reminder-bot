@@ -1144,14 +1144,15 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    # Start scheduler
-    async def post_init(application):
-        asyncio.create_task(scheduler_loop(application))
-
-    app.post_init = post_init
-
     logger.info("💊 Dori Eslatma Boti ishga tushdi!")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    async def run_bot():
+        async with app:
+            await app.start()
+            await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+            await scheduler_loop(app)
+
+    asyncio.run(run_bot())
 
 
 if __name__ == "__main__":
