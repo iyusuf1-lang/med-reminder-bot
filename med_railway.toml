@@ -3,7 +3,4 @@ startCommand = "python bot.py"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 ```
-
-**2. Yangi `Procfile` qo'shing** (fayl nomi: `Procfile`, kengaytmasiz!) — ichiga:
-```
 worker: python bot.py
