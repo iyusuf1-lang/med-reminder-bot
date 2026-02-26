@@ -340,7 +340,6 @@ def delete_medication(med_id: int):
 
 def log_intake(user_id: int, med_id: int, log_date: str, log_time: str, status: str):
     with get_db() as conn:
-        # Avoid duplicates
         existing = conn.execute(
             "SELECT id FROM intake_log WHERE med_id=? AND log_date=? AND log_time=?",
             (med_id, log_date, log_time)
@@ -358,7 +357,6 @@ def log_intake(user_id: int, med_id: int, log_date: str, log_time: str, status: 
 
 
 def get_today_schedule(user_id: int) -> list:
-    """Returns list of {med, time, status} for today"""
     import json
     today = date.today().isoformat()
     meds = get_medications(user_id)
@@ -366,7 +364,6 @@ def get_today_schedule(user_id: int) -> list:
 
     with get_db() as conn:
         for med in meds:
-            # Check if still active (days_total)
             if med["days_total"] > 0:
                 start = date.fromisoformat(med["start_date"])
                 end = start + timedelta(days=med["days_total"])
@@ -449,7 +446,6 @@ def reminder_kb(lang: str, med_id: int, log_date: str, log_time: str) -> InlineK
 
 
 def today_intake_kb(lang: str, schedule: list) -> InlineKeyboardMarkup:
-    """Inline buttons for today's schedule"""
     buttons = []
     today = date.today().isoformat()
     for item in schedule:
@@ -511,7 +507,6 @@ def lang_select_kb() -> InlineKeyboardMarkup:
 # ══════════════════════════════════════════════════════
 
 def parse_times(text: str) -> list[str] | None:
-    """Parse time strings like '08:00\n14:00' or '08:00, 14:00'"""
     import re
     raw = text.replace(",", "\n").replace(";", "\n")
     times = []
@@ -559,7 +554,6 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     upsert_user(user.id, user.username or "", user.first_name or "")
     lang = get_lang(user.id)
-
     await update.message.reply_text(
         t(lang, "welcome"),
         parse_mode=ParseMode.MARKDOWN,
@@ -689,18 +683,24 @@ async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════════════
 
 async def add_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """
+    Entry point for both /add command AND 'cmd_add' callback button.
+    """
     user_id = update.effective_user.id
     lang = get_lang(user_id)
     ctx.user_data.clear()
     ctx.user_data["lang"] = lang
 
-    # Handle both command and callback
-    msg = update.message or update.callback_query.message
     if update.callback_query:
         await update.callback_query.answer()
-        await msg.reply_text(t(lang, "add_name"), parse_mode=ParseMode.MARKDOWN)
+        # Send a NEW message (not edit), so the user can type replies
+        await update.callback_query.message.reply_text(
+            t(lang, "add_name"), parse_mode=ParseMode.MARKDOWN
+        )
     else:
-        await msg.reply_text(t(lang, "add_name"), parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(
+            t(lang, "add_name"), parse_mode=ParseMode.MARKDOWN
+        )
 
     return ADD_NAME
 
@@ -791,7 +791,7 @@ async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # ══════════════════════════════════════════════════════
-# CALLBACK HANDLER
+# CALLBACK HANDLER  (navigation only — no add flow here)
 # ══════════════════════════════════════════════════════
 
 async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -801,20 +801,15 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     lang = get_lang(user_id)
 
-    # ── Navigation ──
+    # NOTE: cmd_add is now handled by ConversationHandler entry point below
+    # This handler only deals with non-conversation callbacks
+
     if data == "cmd_menu":
         await q.edit_message_text(
             t(lang, "menu_title"),
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=main_menu_kb(lang),
         )
-
-    elif data == "cmd_add":
-        ctx.user_data["lang"] = lang
-        await q.edit_message_text(
-            t(lang, "add_name"), parse_mode=ParseMode.MARKDOWN
-        )
-        ctx.user_data["conv_state"] = ADD_NAME
 
     elif data == "cmd_list":
         meds = get_medications(user_id)
@@ -851,9 +846,11 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 tm = item["time"]
                 status = item["status"]
                 icon = "✅" if status == "taken" else ("❌" if status == "missed" else "⏳")
-                status_label = t(lang, "done" if status == "taken" else ("missed_label" if status == "missed" else "pending"))
+                status_label = t(lang, "done" if status == "taken" else (
+                    "missed_label" if status == "missed" else "pending"))
                 notes = f" _{med['notes']}_" if med.get("notes") else ""
-                lines.append(f"{icon} `{tm}` — *{med['name']}* ({med['dose']}){notes}\n   → _{status_label}_\n")
+                lines.append(
+                    f"{icon} `{tm}` — *{med['name']}* ({med['dose']}){notes}\n   → _{status_label}_\n")
             await q.edit_message_text(
                 "\n".join(lines),
                 parse_mode=ParseMode.MARKDOWN,
@@ -883,8 +880,8 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "cmd_settings":
         text = (
             t(lang, "settings_title") + "\n\n" +
-            (t(lang, "current_lang")) + "\n\n" +
-            (t(lang, "btn_lang")) + ":"
+            t(lang, "current_lang") + "\n\n" +
+            t(lang, "btn_lang") + ":"
         )
         await q.edit_message_text(
             text, parse_mode=ParseMode.MARKDOWN,
@@ -901,7 +898,6 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_to_menu_kb(lang),
         )
 
-    # ── Language ──
     elif data.startswith("set_lang:"):
         new_lang = data.split(":")[1]
         set_lang(user_id, new_lang)
@@ -911,7 +907,6 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=main_menu_kb(new_lang),
         )
 
-    # ── Intake ──
     elif data.startswith("intake:"):
         _, status, med_id, log_date, log_time = data.split(":")
         log_intake(user_id, int(med_id), log_date, log_time, status)
@@ -937,7 +932,6 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         else:
             await q.answer(t(lang, "missed_label"), show_alert=False)
 
-    # ── Delete ──
     elif data.startswith("delete_med:"):
         med_id = int(data.split(":")[1])
         with get_db() as conn:
@@ -994,8 +988,9 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text(
                 text, parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🗑 " + ("O'chirish" if lang == "uz" else "Удалить"),
-                                         callback_data=f"delete_med:{med_id}")],
+                    [InlineKeyboardButton(
+                        "🗑 " + ("O'chirish" if lang == "uz" else "Удалить"),
+                        callback_data=f"delete_med:{med_id}")],
                     [InlineKeyboardButton("🔙", callback_data="cmd_list")],
                 ]),
             )
@@ -1006,14 +1001,12 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════════════
 
 async def send_reminders(app):
-    """Run every minute — send reminders for current time"""
     now = datetime.now()
     current_time = now.strftime("%H:%M")
     today = now.date().isoformat()
 
     with get_db() as conn:
         import json
-        # Get all active medications
         meds = conn.execute(
             "SELECT m.*, u.lang FROM medications m JOIN users u ON m.user_id = u.user_id WHERE m.active=1"
         ).fetchall()
@@ -1025,7 +1018,6 @@ async def send_reminders(app):
             if current_time not in times:
                 continue
 
-            # Check days_total
             if med["days_total"] > 0:
                 from datetime import date, timedelta
                 start = date.fromisoformat(med["start_date"])
@@ -1033,7 +1025,6 @@ async def send_reminders(app):
                 if date.today() > end:
                     continue
 
-            # Check if already notified
             existing = conn.execute(
                 "SELECT id FROM intake_log WHERE med_id=? AND log_date=? AND log_time=?",
                 (med["id"], today, current_time)
@@ -1041,18 +1032,15 @@ async def send_reminders(app):
             if existing:
                 continue
 
-            # Create pending log
             conn.execute(
                 "INSERT INTO intake_log (user_id, med_id, log_date, log_time, status) VALUES (?,?,?,?,?)",
                 (med["user_id"], med["id"], today, current_time, "pending")
             )
 
             lang = med.get("lang", "uz")
-            notes = med["notes"] or ("—" if lang == "uz" else "—")
-
+            notes = med["notes"] or "—"
             kb = reminder_kb(lang, med["id"], today, current_time)
-            text = t(lang, "reminder",
-                     name=med["name"], dose=med["dose"], notes=notes)
+            text = t(lang, "reminder", name=med["name"], dose=med["dose"], notes=notes)
 
             try:
                 await app.bot.send_message(
@@ -1066,7 +1054,6 @@ async def send_reminders(app):
 
 
 async def scheduler_loop(app):
-    """Background loop for sending reminders every minute"""
     while True:
         try:
             await send_reminders(app)
@@ -1076,33 +1063,17 @@ async def scheduler_loop(app):
 
 
 # ══════════════════════════════════════════════════════
-# UNKNOWN MESSAGE HANDLER
+# UNKNOWN TEXT HANDLER (outside conversation)
 # ══════════════════════════════════════════════════════
 
 async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Handle text messages during conversation flow"""
-    state = ctx.user_data.get("conv_state")
-    if state is None:
-        lang = get_lang(update.effective_user.id)
-        await update.message.reply_text(
-            t(lang, "menu_title"),
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=main_menu_kb(lang),
-        )
-        return
-
-    # Route to appropriate conversation step
-    if state == ADD_NAME:
-        return await add_got_name(update, ctx)
-    elif state == ADD_DOSE:
-        return await add_got_dose(update, ctx)
-    elif state == ADD_TIMES:
-        return await add_got_times(update, ctx)
-    elif state == ADD_DAYS:
-        return await add_got_days(update, ctx)
-    elif state == ADD_NOTES:
-        ctx.user_data.pop("conv_state", None)
-        return await add_got_notes(update, ctx)
+    """Handles text messages that are NOT inside a ConversationHandler"""
+    lang = get_lang(update.effective_user.id)
+    await update.message.reply_text(
+        t(lang, "menu_title"),
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=main_menu_kb(lang),
+    )
 
 
 # ══════════════════════════════════════════════════════
@@ -1114,10 +1085,12 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Conversation handler for adding medications
+    # ── ConversationHandler: add medication ──
+    # Entry points include BOTH /add command AND the inline "➕ Dori qo'shish" button
     add_conv = ConversationHandler(
         entry_points=[
             CommandHandler("add", add_start),
+            CallbackQueryHandler(add_start, pattern="^cmd_add$"),  # ← KEY FIX
         ],
         states={
             ADD_NAME:  [MessageHandler(filters.TEXT & ~filters.COMMAND, add_got_name)],
@@ -1133,15 +1106,15 @@ def main():
         allow_reentry=True,
     )
 
-    # Register handlers
+    # ── Register handlers (order matters!) ──
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("menu", cmd_menu))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("list", cmd_list))
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("stats", cmd_stats))
-    app.add_handler(add_conv)
-    app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(add_conv)                                        # conversation first
+    app.add_handler(CallbackQueryHandler(handle_callback))           # then general callbacks
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     logger.info("💊 Dori Eslatma Boti ishga tushdi!")
