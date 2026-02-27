@@ -18,6 +18,7 @@ import os
 import sqlite3
 from datetime import datetime, date, time, timedelta
 from contextlib import contextmanager
+from zoneinfo import ZoneInfo  # ← TIMEZONE FIX
 
 from telegram import (
     Update,
@@ -46,6 +47,9 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8562690623:AAHPoejmW6dT8qL8Au3mYEwmC_SWIcInVUM")
 DB_PATH = os.getenv("DB_PATH", "medbot.db")
+
+# ✅ TIMEZONE: Toshkent = UTC+5
+TIMEZONE = ZoneInfo(os.getenv("TZ", "Asia/Tashkent"))
 
 # ConversationHandler states
 (
@@ -107,8 +111,8 @@ T = {
         "taken_yes": "✅ Qabul qildim",
         "taken_no": "❌ O'tkazib yubordim",
         "reminder": "⏰ *Dori vaqti!*\n\n💊 *{name}*\n💉 Doza: {dose}\n📝 {notes}\n\nQabul qildingizmi?",
-        "confirmed_taken": "✅ Qabul qilindi! Yaxshi!",
-        "confirmed_missed": "😔 O'tkazib yuborildi. Keyingisini unutmang!",
+        "confirmed_taken": "✅ *Qabul qilindi!*\n\nYaxshi, sog'lom bo'ling! 💪",
+        "confirmed_missed": "😔 *O'tkazib yuborildi.*\n\nKeyingisini unutmang!",
         "delete_confirm": "🗑 *{name}* ni o'chirmoqchimisiz?",
         "deleted": "🗑 *{name}* o'chirildi.",
         "cancel": "❌ Bekor qilindi.",
@@ -183,8 +187,8 @@ T = {
         "taken_yes": "✅ Принял(а)",
         "taken_no": "❌ Пропустил(а)",
         "reminder": "⏰ *Время принять лекарство!*\n\n💊 *{name}*\n💉 Доза: {dose}\n📝 {notes}\n\nВы приняли?",
-        "confirmed_taken": "✅ Отлично! Приём засчитан.",
-        "confirmed_missed": "😔 Пропуск записан. Не забудьте следующий!",
+        "confirmed_taken": "✅ *Отлично! Приём засчитан.*\n\nБудьте здоровы! 💪",
+        "confirmed_missed": "😔 *Пропуск записан.*\n\nНе забудьте следующий!",
         "delete_confirm": "🗑 Удалить *{name}*?",
         "deleted": "🗑 *{name}* удалено.",
         "cancel": "❌ Отменено.",
@@ -358,7 +362,8 @@ def log_intake(user_id: int, med_id: int, log_date: str, log_time: str, status: 
 
 def get_today_schedule(user_id: int) -> list:
     import json
-    today = date.today().isoformat()
+    # ✅ Use Tashkent timezone
+    today = datetime.now(TIMEZONE).date().isoformat()
     meds = get_medications(user_id)
     schedule = []
 
@@ -367,7 +372,7 @@ def get_today_schedule(user_id: int) -> list:
             if med["days_total"] > 0:
                 start = date.fromisoformat(med["start_date"])
                 end = start + timedelta(days=med["days_total"])
-                if date.today() > end:
+                if datetime.now(TIMEZONE).date() > end:
                     continue
 
             for tm in med["times"]:
@@ -447,7 +452,8 @@ def reminder_kb(lang: str, med_id: int, log_date: str, log_time: str) -> InlineK
 
 def today_intake_kb(lang: str, schedule: list) -> InlineKeyboardMarkup:
     buttons = []
-    today = date.today().isoformat()
+    # ✅ Use Tashkent timezone
+    today = datetime.now(TIMEZONE).date().isoformat()
     for item in schedule:
         med = item["med"]
         tm = item["time"]
@@ -540,7 +546,8 @@ def format_days_left(med: dict, lang: str) -> str:
         return t(lang, "days_forever")
     start = date.fromisoformat(med["start_date"])
     end = start + timedelta(days=med["days_total"])
-    remaining = (end - date.today()).days
+    # ✅ Use Tashkent timezone
+    remaining = (end - datetime.now(TIMEZONE).date()).days
     if remaining <= 0:
         return "⛔ Tugagan" if lang == "uz" else "⛔ Завершён"
     return t(lang, "days_left", n=remaining)
@@ -614,7 +621,8 @@ async def cmd_today(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def _show_today(message, user_id: int, lang: str):
     schedule = get_today_schedule(user_id)
-    today_str = datetime.now().strftime("%d.%m.%Y")
+    # ✅ Use Tashkent timezone
+    today_str = datetime.now(TIMEZONE).strftime("%d.%m.%Y")
 
     if not schedule:
         await message.reply_text(
@@ -683,9 +691,6 @@ async def cmd_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════════════
 
 async def add_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """
-    Entry point for both /add command AND 'cmd_add' callback button.
-    """
     user_id = update.effective_user.id
     lang = get_lang(user_id)
     ctx.user_data.clear()
@@ -693,7 +698,6 @@ async def add_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if update.callback_query:
         await update.callback_query.answer()
-        # Send a NEW message (not edit), so the user can type replies
         await update.callback_query.message.reply_text(
             t(lang, "add_name"), parse_mode=ParseMode.MARKDOWN
         )
@@ -791,7 +795,7 @@ async def conv_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # ══════════════════════════════════════════════════════
-# CALLBACK HANDLER  (navigation only — no add flow here)
+# CALLBACK HANDLER
 # ══════════════════════════════════════════════════════
 
 async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -800,9 +804,6 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data = q.data
     user_id = update.effective_user.id
     lang = get_lang(user_id)
-
-    # NOTE: cmd_add is now handled by ConversationHandler entry point below
-    # This handler only deals with non-conversation callbacks
 
     if data == "cmd_menu":
         await q.edit_message_text(
@@ -832,7 +833,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "cmd_today":
         schedule = get_today_schedule(user_id)
-        today_str = datetime.now().strftime("%d.%m.%Y")
+        today_str = datetime.now(TIMEZONE).strftime("%d.%m.%Y")
         if not schedule:
             await q.edit_message_text(
                 t(lang, "today_title", date=today_str) + t(lang, "today_empty"),
@@ -908,22 +909,35 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data.startswith("intake:"):
+        # ✅ FIX: Try edit first; if fails (reminder xabar), yangi xabar yuborish
         _, status, med_id, log_date, log_time = data.split(":")
         log_intake(user_id, int(med_id), log_date, log_time, status)
         confirm_key = "confirmed_taken" if status == "taken" else "confirmed_missed"
-        await q.edit_message_text(
-            t(lang, confirm_key), parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton(
-                    "📅 Jadval" if lang == "uz" else "📅 Расписание",
-                    callback_data="cmd_today"
-                ),
-                InlineKeyboardButton(
-                    "🏠 Menyu" if lang == "uz" else "🏠 Меню",
-                    callback_data="cmd_menu"
-                ),
-            ]]),
-        )
+
+        confirm_kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton(
+                "📅 Jadval" if lang == "uz" else "📅 Расписание",
+                callback_data="cmd_today"
+            ),
+            InlineKeyboardButton(
+                "🏠 Menyu" if lang == "uz" else "🏠 Меню",
+                callback_data="cmd_menu"
+            ),
+        ]])
+
+        try:
+            await q.edit_message_text(
+                t(lang, confirm_key),
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=confirm_kb,
+            )
+        except Exception:
+            # Agar edit ishlamasa (masalan, eslatma xabari), yangi xabar yuborish
+            await q.message.reply_text(
+                t(lang, confirm_key),
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=confirm_kb,
+            )
 
     elif data.startswith("show_status:"):
         status = data.split(":")[1]
@@ -1001,9 +1015,12 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════════════
 
 async def send_reminders(app):
-    now = datetime.now()
+    # ✅ FIX: Toshkent vaqti ishlatildi (UTC+5)
+    now = datetime.now(TIMEZONE)
     current_time = now.strftime("%H:%M")
     today = now.date().isoformat()
+
+    logger.info(f"Scheduler tick: Toshkent = {now.strftime('%Y-%m-%d %H:%M')} | UTC = {datetime.utcnow().strftime('%H:%M')}")
 
     with get_db() as conn:
         import json
@@ -1019,10 +1036,9 @@ async def send_reminders(app):
                 continue
 
             if med["days_total"] > 0:
-                from datetime import date, timedelta
                 start = date.fromisoformat(med["start_date"])
                 end = start + timedelta(days=med["days_total"])
-                if date.today() > end:
+                if now.date() > end:
                     continue
 
             existing = conn.execute(
@@ -1049,6 +1065,7 @@ async def send_reminders(app):
                     parse_mode=ParseMode.MARKDOWN,
                     reply_markup=kb,
                 )
+                logger.info(f"✅ Reminder sent → user {med['user_id']}, {med['name']} @ {current_time}")
             except Exception as e:
                 logger.warning(f"Reminder error for user {med['user_id']}: {e}")
 
@@ -1067,7 +1084,6 @@ async def scheduler_loop(app):
 # ══════════════════════════════════════════════════════
 
 async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Handles text messages that are NOT inside a ConversationHandler"""
     lang = get_lang(update.effective_user.id)
     await update.message.reply_text(
         t(lang, "menu_title"),
@@ -1085,12 +1101,10 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # ── ConversationHandler: add medication ──
-    # Entry points include BOTH /add command AND the inline "➕ Dori qo'shish" button
     add_conv = ConversationHandler(
         entry_points=[
             CommandHandler("add", add_start),
-            CallbackQueryHandler(add_start, pattern="^cmd_add$"),  # ← KEY FIX
+            CallbackQueryHandler(add_start, pattern="^cmd_add$"),
         ],
         states={
             ADD_NAME:  [MessageHandler(filters.TEXT & ~filters.COMMAND, add_got_name)],
@@ -1106,15 +1120,14 @@ def main():
         allow_reentry=True,
     )
 
-    # ── Register handlers (order matters!) ──
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("menu", cmd_menu))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("list", cmd_list))
     app.add_handler(CommandHandler("today", cmd_today))
     app.add_handler(CommandHandler("stats", cmd_stats))
-    app.add_handler(add_conv)                                        # conversation first
-    app.add_handler(CallbackQueryHandler(handle_callback))           # then general callbacks
+    app.add_handler(add_conv)
+    app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     logger.info("💊 Dori Eslatma Boti ishga tushdi!")
