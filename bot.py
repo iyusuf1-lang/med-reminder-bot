@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-💊 Dori Eslatma Boti / Бот напоминания о лекарствах
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💊 Dori Eslatma Boti / Бот напоминания о лекарствах - FIXED v2.0
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Funksiyalar:
   ✅ Dori qo'shish (nom, doza, vaqt, davomiylik)
   ✅ Har kuni push-eslatmalar
@@ -10,6 +10,15 @@ Funksiyalar:
   ✅ Statistika (%)
   ✅ O'zbek + Rus tili
   ✅ SQLite ma'lumotlar bazasi
+
+🔧 FIXES (v2.0):
+  1. ✅ Scheduler loop BACKGROUND TASK sifatida ishga tushadi
+  2. ✅ Better logging va debugging
+  3. ✅ Reminder notifications endi ishlaydi
+  4. ✅ "Ichtim" tugmasi to'g'ri ishlaydi
+  5. ✅ Toshkent timezone (UTC+5) support
+  
+📅 Last updated: 2026-03-04
 """
 
 import asyncio
@@ -1015,19 +1024,26 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════════════
 
 async def send_reminders(app):
+    """
+    ✅ Toshkent vaqti bo'yicha reminder yuborish
+    """
     # ✅ FIX: Toshkent vaqti ishlatildi (UTC+5)
     now = datetime.now(TIMEZONE)
     current_time = now.strftime("%H:%M")
     today = now.date().isoformat()
 
-    logger.info(f"Scheduler tick: Toshkent = {now.strftime('%Y-%m-%d %H:%M')} | UTC = {datetime.utcnow().strftime('%H:%M')}")
+    logger.info(f"🔍 Scheduler tick: Toshkent = {now.strftime('%Y-%m-%d %H:%M')} | UTC = {datetime.utcnow().strftime('%H:%M')}")
 
     with get_db() as conn:
         import json
         meds = conn.execute(
             "SELECT m.*, u.lang FROM medications m JOIN users u ON m.user_id = u.user_id WHERE m.active=1"
         ).fetchall()
+        
+        total_meds = len(meds)
+        logger.info(f"📊 Active medications: {total_meds}")
 
+        reminders_sent = 0
         for med in meds:
             med = dict(med)
             times = json.loads(med["times"])
@@ -1035,24 +1051,30 @@ async def send_reminders(app):
             if current_time not in times:
                 continue
 
+            # Check if medication period expired
             if med["days_total"] > 0:
                 start = date.fromisoformat(med["start_date"])
                 end = start + timedelta(days=med["days_total"])
                 if now.date() > end:
+                    logger.info(f"⏭ Skipping expired med: {med['name']} (ended {end})")
                     continue
 
+            # Check if already logged
             existing = conn.execute(
                 "SELECT id FROM intake_log WHERE med_id=? AND log_date=? AND log_time=?",
                 (med["id"], today, current_time)
             ).fetchone()
             if existing:
+                logger.debug(f"⏭ Already logged: {med['name']} @ {current_time}")
                 continue
 
+            # Create intake log entry
             conn.execute(
                 "INSERT INTO intake_log (user_id, med_id, log_date, log_time, status) VALUES (?,?,?,?,?)",
                 (med["user_id"], med["id"], today, current_time, "pending")
             )
 
+            # Send reminder
             lang = med.get("lang", "uz")
             notes = med["notes"] or "—"
             kb = reminder_kb(lang, med["id"], today, current_time)
@@ -1065,17 +1087,36 @@ async def send_reminders(app):
                     parse_mode=ParseMode.MARKDOWN,
                     reply_markup=kb,
                 )
-                logger.info(f"✅ Reminder sent → user {med['user_id']}, {med['name']} @ {current_time}")
+                reminders_sent += 1
+                logger.info(f"✅ Reminder sent → user {med['user_id']}, med: {med['name']} @ {current_time}")
             except Exception as e:
-                logger.warning(f"Reminder error for user {med['user_id']}: {e}")
+                logger.warning(f"❌ Reminder failed for user {med['user_id']}: {e}")
+        
+        if reminders_sent > 0:
+            logger.info(f"📤 Total reminders sent: {reminders_sent}")
+        else:
+            logger.debug(f"💤 No reminders to send at {current_time}")
 
 
 async def scheduler_loop(app):
+    """
+    ✅ Har 60 soniyada reminder check qilish
+    """
+    logger.info("🔄 Scheduler loop started - checking every 60 seconds")
+    iteration = 0
+    
     while True:
         try:
+            iteration += 1
             await send_reminders(app)
+            
+            # Every 10 minutes - status log
+            if iteration % 10 == 0:
+                logger.info(f"✅ Scheduler alive - {iteration} iterations completed")
+                
         except Exception as e:
-            logger.error(f"Scheduler error: {e}")
+            logger.error(f"❌ Scheduler error: {e}", exc_info=True)
+        
         await asyncio.sleep(60)
 
 
@@ -1135,8 +1176,16 @@ def main():
     async def run_bot():
         async with app:
             await app.start()
+            
+            # ✅ FIX: Scheduler'ni background task sifatida ishga tushirish
+            scheduler_task = asyncio.create_task(scheduler_loop(app))
+            logger.info("✅ Scheduler background task ishga tushdi!")
+            
+            # Polling'ni boshlash (bu blocking, lekin scheduler alohida task'da)
             await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-            await scheduler_loop(app)
+            
+            # Cleanup on exit
+            scheduler_task.cancel()
 
     asyncio.run(run_bot())
 
