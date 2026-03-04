@@ -54,7 +54,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8562690623:AAHYzmQVPlG8wLMNRjfZ6s-8w3s6fTB2SZc")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8562690623:AAHPoejmW6dT8qL8Au3mYEwmC_SWIcInVUM")
 DB_PATH = os.getenv("DB_PATH", "medbot.db")
 
 # ✅ TIMEZONE: Toshkent = UTC+5
@@ -1177,12 +1177,24 @@ def main():
         async with app:
             await app.start()
             
+            # ✅ FIX: Webhook'ni o'chirish (polling bilan konflikt oldini olish)
+            try:
+                webhook_info = await app.bot.get_webhook_info()
+                if webhook_info.url:
+                    logger.warning(f"⚠️ Webhook topildi: {webhook_info.url}")
+                    await app.bot.delete_webhook(drop_pending_updates=True)
+                    logger.info("✅ Webhook o'chirildi!")
+                else:
+                    logger.info("✅ Webhook yo'q (polling mode)")
+            except Exception as e:
+                logger.error(f"❌ Webhook check error: {e}")
+            
             # ✅ FIX: Scheduler'ni background task sifatida ishga tushirish
             scheduler_task = asyncio.create_task(scheduler_loop(app))
             logger.info("✅ Scheduler background task ishga tushdi!")
             
             # Polling'ni boshlash (bu blocking, lekin scheduler alohida task'da)
-            await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+            await app.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
             
             # Cleanup on exit
             scheduler_task.cancel()
