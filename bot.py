@@ -54,7 +54,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8562690623:AAHPoejmW6dT8qL8Au3mYEwmC_SWIcInVUM")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8562690623:AAFLEd6v928UR1tGqDunNfYHAPJnLdJ1q_U")
 DB_PATH = os.getenv("DB_PATH", "medbot.db")
 
 # ✅ TIMEZONE: Toshkent = UTC+5
